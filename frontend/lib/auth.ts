@@ -108,15 +108,42 @@ export const auth = betterAuth({
   hooks: {
     // Ветка A: эндпоинты, работающие с УЖЕ существующей сессией
     // (/get-session, /update-user, /change-password, /list-sessions,
-    // /revoke-*, ...). /sign-in* и /sign-up* сюда намеренно не попадают —
-    // видят их ветка B (databaseHooks.session.create.before) и сам
-    // disableSignUp. Причина в разнице момента: здесь вызывающий уже
-    // предъявил валидный токен именно этого аккаунта, поэтому отдельный ответ
-    // "аккаунт отключён" ничего нового не раскрывает — и, что важнее,
+    // /revoke-*, ...). /sign-in*, /sign-up* и /sign-out сюда намеренно не
+    // попадают: первые два видит ветка B (databaseHooks.session.create.before)
+    // и сам disableSignUp, а /sign-out пользователю должен быть доступен
+    // всегда — отключённый пользователь обязан иметь возможность стереть
+    // собственный cookie, отказ в этом ничего не защищает (ревью round 2,
+    // item 3). Причина не гонять эту проверку на /sign-in — здесь вызывающий
+    // уже предъявил валидный токен именно этого аккаунта, поэтому отдельный
+    // ответ "аккаунт отключён" ничего нового не раскрывает — и, что важнее,
     // проверка ДО обработчика гарантирует, что побочный эффект эндпоинта
     // (смена пароля, выпуск обновлённой сессии) вообще не выполнится.
+    //
+    // ctx._flag !== 'router' — хук должен применяться ТОЛЬКО к настоящим HTTP-
+    // запросам через смонтированный роутер (app/api/auth/[...all]/route.ts),
+    // а не к прямым вызовам auth.api.*, которые использует наш же
+    // server/auth/session.ts::readSessionUser. Без этой строки
+    // getSessionUser() для отключённого пользователя не возвращал бы null, а
+    // бросал бы этот же APIError — I-1 переставал бы работать в проде, а
+    // AuthError('INACTIVE') становился бы недостижимым (ревью round 2, §3.1).
+    // Проверено по исходнику, не предположено: `_flag: "router"` выставляет
+    // ТОЛЬКО better-call/dist/router.mjs:69, когда HTTP-запрос приходит через
+    // auth.handler (better-auth/dist/auth/base.mjs → router(...).handler).
+    // Прямой вызов auth.api.getSession({headers}) идёт через
+    // toAuthEndpoints (api/to-auth-endpoints.mjs), которая просто
+    // расширяет объект, переданный вызывающим кодом — если вызывающий не
+    // передал ни request, ни _flag (а readSessionUser передаёт только
+    // headers), их и не будет. Это тот же самый признак, которым в
+    // better-auth/dist/integrations/next-js.mjs пользуется собственный
+    // плагин nextCookies для того же различения.
     before: createAuthMiddleware(async (ctx) => {
-      if (ctx.path.startsWith('/sign-in') || ctx.path.startsWith('/sign-up')) return
+      if (!('_flag' in ctx) || ctx._flag !== 'router') return
+      if (
+        ctx.path.startsWith('/sign-in') ||
+        ctx.path.startsWith('/sign-up') ||
+        ctx.path.startsWith('/sign-out')
+      )
+        return
 
       const session = await getSessionFromCtx(ctx)
       if (session?.user && session.user.isActive === false) {
@@ -137,28 +164,40 @@ export const auth = betterAuth({
         // существования аккаунта для анонимного вызывающего. Здесь же, в
         // database hook на создание Session, better-auth уже проверил пароль
         // (dist/api/routes/sign-in.mjs:329-335 выполняется раньше вызова
-        // internalAdapter.createSession, который и запускает этот хук) — и
-        // именно поэтому строка ниже бросает ТОТ ЖЕ ответ, что и неверный
-        // пароль (BASE_ERROR_CODES.INVALID_EMAIL_OR_PASSWORD), а не отдельное
-        // сообщение: отличать "отключён" от "неверный пароль" сообщило бы
-        // анонимному наблюдателю, что пароль был верным — это утечка серьёзнее,
-        // чем факт существования аккаунта. Бросок здесь же, ДО записи строки в
-        // Session (createWithHooks сначала прогоняет before-хуки и только
-        // потом создаёт запись — db/with-hooks.mjs), гарантирует, что у
-        // отключённого пользователя не появится ни одной сессии ни на миг.
-        before: async (session, ctx) => {
-          if (!ctx) return
-          // internalAdapter.findUserById не параметризован нашими
-          // additionalFields (role/isActive) — тот же паттерн сужения типа,
-          // что использует сам better-auth в своём admin-плагине для
-          // аналогичной проверки banned (plugins/admin/admin.ts: `as
-          // UserWithRole | null`). В рантайме поле присутствует: findUserById
-          // читает через адаптер без select и без фильтрации по `returned`.
-          const user = (await ctx.context.internalAdapter.findUserById(session.userId)) as {
-            isActive?: boolean
-          } | null
-          if (user && user.isActive === false) {
-            throw new APIError('UNAUTHORIZED', BASE_ERROR_CODES.INVALID_EMAIL_OR_PASSWORD)
+        // internalAdapter.createSession, который и запускает этот хук).
+        //
+        // Ответ — APIError.from(...), а НЕ new APIError(...) (ревью round 2,
+        // item 1). .from() пересобирает тело как {message, code} — ровно так
+        // же, как сам better-auth на строке неверного пароля
+        // (dist/api/routes/sign-in.mjs:333, тот же APIError.from). new
+        // APIError(status, BASE_ERROR_CODES.X) вместо этого пропускает X как
+        // есть телом ответа, а X — это {code, message} (обратный порядок
+        // ключей) плюс метод toString. Порядок ключей — часть байтов
+        // JSON.stringify, значит два ответа отличались бы в первом же байте
+        // после "{" — обратное тому, что должна делать эта ветка: сообщить
+        // анонимному наблюдателю, что пароль был верным (через различимый
+        // ответ), — утечка серьёзнее, чем факт существования аккаунта.
+        // Проверено побайтовым сравнением тел в tests/auth-integration.test.ts.
+        //
+        // Бросок здесь же, ДО записи строки в Session (createWithHooks
+        // сначала прогоняет before-хуки и только потом создаёт запись —
+        // db/with-hooks.mjs), гарантирует, что у отключённого пользователя не
+        // появится ни одной сессии ни на миг.
+        //
+        // ctx не используется и не проверяется на существование (ревью round
+        // 2, item 4): раньше `if (!ctx) return` был единственным местом во
+        // всей проверке, которое отказывало открыто (fail-open) — ctx берётся
+        // из async local storage (db/with-hooks.mjs), и любой будущий вызов
+        // createSession вне HTTP-контекста тихо пропускал бы проверку. Прямой
+        // запрос к prisma не нуждается в ctx вообще, поэтому проверка
+        // выполняется ВСЕГДА.
+        before: async (session) => {
+          const user = await prisma.user.findUnique({
+            where: { id: session.userId },
+            select: { isActive: true },
+          })
+          if (user && !user.isActive) {
+            throw APIError.from('UNAUTHORIZED', BASE_ERROR_CODES.INVALID_EMAIL_OR_PASSWORD)
           }
         },
       },

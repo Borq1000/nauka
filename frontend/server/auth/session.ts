@@ -77,12 +77,18 @@ export async function requireUser(): Promise<SessionUser> {
 
 export async function requireRole(role: Role): Promise<SessionUser> {
   const user = await requireUser()
+  const requiredRank = ROLE_RANK[role]
   const userRank = ROLE_RANK[user.role]
   // Allowlist по рангу, а не отдельное условие на каждую роль (I-2, ревью
   // round 1): ADMIN удовлетворяет требованию EDITOR, а роль, которой нет в
   // ROLE_RANK, — userRank будет undefined — не удовлетворяет НИЧЕМУ, вместо
   // того чтобы молча пройти, как было раньше при role === 'EDITOR'.
-  if (userRank === undefined || userRank < ROLE_RANK[role]) {
+  // requiredRank тоже проверяется на undefined (ревью round 2, item 5):
+  // без этого requireRole('X' as Role) с нераспознанным X превращал бы
+  // сравнение в `userRank < undefined`, которое в JS всегда false, —
+  // то есть пропускал бы любого пользователя. Сегодня недостижимо (все
+  // вызовы — типизированные литералы), но закрыто на будущее.
+  if (requiredRank === undefined || userRank === undefined || userRank < requiredRank) {
     throw new AuthError('FORBIDDEN', 'Недостаточно прав')
   }
   return user
