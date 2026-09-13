@@ -9,3 +9,313 @@ datasource db {
   // URL задаётся в prisma.config.ts.
   provider = "postgresql"
 }
+
+enum Role {
+  ADMIN
+  EDITOR
+}
+
+enum PublishStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum InquiryStatus {
+  NEW
+  IN_PROGRESS
+  DONE
+  SPAM
+}
+
+// ---------- Пользователи и сессии (структура под better-auth) ----------
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique          // хранится в нижнем регистре
+  emailVerified Boolean   @default(false)
+  name          String
+  image         String?
+  role          Role      @default(EDITOR)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  posts         Post[]    @relation("PostAuthor")
+
+  @@index([isActive])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Account {
+  id                    String    @id @default(uuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model RateLimit {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  count     Int      @default(0)
+  lastReset BigInt
+
+  @@index([key])
+}
+
+// ---------- Медиа ----------
+
+model Media {
+  id           String   @id @default(uuid())
+  storageKey   String   @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+  alt          String   @default("")
+  createdAt    DateTime @default(now())
+
+  pagesCover   Page[]    @relation("PageCover")
+  pagesOg      Page[]    @relation("PageOg")
+  servicesCover Service[] @relation("ServiceCover")
+  servicesOg   Service[] @relation("ServiceOg")
+  postsCover   Post[]    @relation("PostCover")
+  postsOg      Post[]    @relation("PostOg")
+}
+
+// ---------- Обычные страницы ----------
+
+model Page {
+  id             String        @id @default(uuid())
+  title          String
+  slug           String        @unique
+  status         PublishStatus @default(DRAFT)
+  excerpt        String?
+  content        Json?
+  coverMediaId   String?
+  seoTitle       String?
+  seoDescription String?
+  ogMediaId      String?
+  noIndex        Boolean       @default(false)
+  templateKey    String        @default("default")
+  templateData   Json?
+  isHome         Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  publishedAt    DateTime?
+  createdById    String?
+  updatedById    String?
+
+  coverMedia     Media?        @relation("PageCover", fields: [coverMediaId], references: [id], onDelete: Restrict)
+  ogMedia        Media?        @relation("PageOg", fields: [ogMediaId], references: [id], onDelete: Restrict)
+
+  @@index([status, publishedAt])
+}
+
+// ---------- Услуги ----------
+
+model Service {
+  id              String        @id @default(uuid())
+  title           String
+  slug            String        @unique
+  path            String        @unique   // материализованный путь: "science/tesla"
+  status          PublishStatus @default(DRAFT)
+  excerpt         String?
+  content         Json?
+  coverMediaId    String?
+  seoTitle        String?
+  seoDescription  String?
+  ogMediaId       String?
+  noIndex         Boolean       @default(false)
+  parentId        String?
+  sortOrder       Int           @default(0)
+  templateKey     String        @default("service-default")
+  templateData    Json?
+  isFeatured      Boolean       @default(false)
+  priceFrom       Decimal?      @db.Decimal(10, 2)
+  currency        String?       @default("RUB")
+  durationMinutes Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  publishedAt     DateTime?
+  createdById     String?
+  updatedById     String?
+
+  parent          Service?      @relation("ServiceTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children        Service[]     @relation("ServiceTree")
+  coverMedia      Media?        @relation("ServiceCover", fields: [coverMediaId], references: [id], onDelete: Restrict)
+  ogMedia         Media?        @relation("ServiceOg", fields: [ogMediaId], references: [id], onDelete: Restrict)
+  inquiries       Inquiry[]
+
+  @@index([parentId, sortOrder])
+  @@index([status, publishedAt])
+}
+
+// ---------- Блог ----------
+
+model Post {
+  id             String         @id @default(uuid())
+  title          String
+  slug           String         @unique
+  status         PublishStatus  @default(DRAFT)
+  excerpt        String?
+  content        Json?
+  coverMediaId   String?
+  seoTitle       String?
+  seoDescription String?
+  ogMediaId      String?
+  noIndex        Boolean        @default(false)
+  authorId       String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  publishedAt    DateTime?
+  createdById    String?
+  updatedById    String?
+
+  author         User           @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  coverMedia     Media?         @relation("PostCover", fields: [coverMediaId], references: [id], onDelete: Restrict)
+  ogMedia        Media?         @relation("PostOg", fields: [ogMediaId], references: [id], onDelete: Restrict)
+  categories     PostCategory[]
+
+  @@index([status, publishedAt])
+  @@index([authorId])
+}
+
+model Category {
+  id             String         @id @default(uuid())
+  name           String
+  slug           String         @unique
+  description    String?
+  seoTitle       String?
+  seoDescription String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  posts          PostCategory[]
+}
+
+model PostCategory {
+  postId     String
+  categoryId String
+
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@id([postId, categoryId])
+  @@index([categoryId])
+}
+
+// ---------- Заявки ----------
+
+model Inquiry {
+  id          String        @id @default(uuid())
+  name        String
+  phone       String
+  email       String?
+  message     String?
+  serviceId   String?
+  desiredDate DateTime?
+  status      InquiryStatus @default(NEW)
+  sourcePath  String
+  ipHash      String?
+  createdAt   DateTime      @default(now())
+
+  service     Service?      @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+}
+
+// ---------- Настройки, меню, редиректы ----------
+
+model SiteSettings {
+  id             String   @id @default("singleton")
+  siteName       String
+  siteDescription String?
+  logoMediaId    String?
+  phone          String?
+  email          String?
+  address        String?
+  socialLinks    Json?
+  timezone       String   @default("Europe/Moscow")
+  seoTitle       String?
+  seoDescription String?
+  updatedAt      DateTime @updatedAt
+}
+
+model Menu {
+  id        String     @id @default(uuid())
+  key       String     @unique   // "header" | "footer"
+  title     String
+  items     MenuItem[]
+}
+
+model MenuItem {
+  id         String     @id @default(uuid())
+  menuId     String
+  parentId   String?
+  label      String
+  entityType String?    // "page" | "service" | "post" | "category"
+  entityId   String?    // ссылка на id сущности, НЕ на slug
+  externalUrl String?
+  sortOrder  Int        @default(0)
+
+  menu       Menu       @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  parent     MenuItem?  @relation("MenuTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children   MenuItem[] @relation("MenuTree")
+
+  @@index([menuId, sortOrder])
+  @@index([parentId])
+}
+
+model Redirect {
+  id         String   @id @default(uuid())
+  sourcePath String   @unique
+  targetPath String
+  code       Int      @default(301)
+  createdAt  DateTime @default(now())
+
+  @@index([targetPath])
+}
