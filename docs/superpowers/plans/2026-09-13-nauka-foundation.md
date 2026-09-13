@@ -1327,13 +1327,41 @@ async function main() {
     process.exit(1)
   }
 
-  // Пароль хешируется самим better-auth — собственную криптографию
-  // ТЗ п. 2 запрещает разрабатывать.
-  await auth.api.signUpEmail({ body: { email, password, name } })
+  // ВНИМАНИЕ: `auth.api.signUpEmail` здесь НЕ РАБОТАЕТ, и это установлено
+  // чтением исходников установленной версии, а не предположением.
+  // Причины две, каждой достаточно:
+  //   1. `disableSignUp: true` проверяется ВНУТРИ обработчика регистрации,
+  //      поэтому серверный вызов отклоняется так же, как HTTP-запрос;
+  //   2. `parseInputData` принудительно выставляет `role` в значение по
+  //      умолчанию `EDITOR`, потому что поле помечено `input: false`.
+  //
+  // Рабочий путь — внутренний адаптер: `internalAdapter.createUser`
+  // передаёт данные напрямую, минуя `parseUserInput`, поэтому роль
+  // назначается сразу и правильно.
+  //
+  // Точные имена методов и форму аргументов СВЕРИТЬ с установленной
+  // версией better-auth 1.7.4 перед написанием: ниже показан замысел,
+  // а не проверенная сигнатура.
+  const ctx = await auth.$context
 
-  // Роль назначается отдельно: поле помечено input: false и через
-  // публичный API его установить нельзя.
-  await prisma.user.update({ where: { email }, data: { role: 'ADMIN', isActive: true } })
+  // Хеширование пароля выполняет сам better-auth — собственную криптографию
+  // ТЗ п. 2 разрабатывать запрещает.
+  const passwordHash = await ctx.password.hash(password)
+
+  const user = await ctx.internalAdapter.createUser({
+    email,
+    name,
+    emailVerified: false,
+    role: 'ADMIN',
+    isActive: true,
+  })
+
+  await ctx.internalAdapter.createAccount({
+    userId: user.id,
+    providerId: 'credential',
+    accountId: user.id,
+    password: passwordHash,
+  })
 
   console.log(`Администратор ${email} создан`)
   await prisma.$disconnect()
