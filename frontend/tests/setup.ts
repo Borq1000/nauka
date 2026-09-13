@@ -3,8 +3,20 @@
 // удаляли бы контент владелицы, а тест «две главные страницы запрещены»
 // начал бы падать, как только в events появится настоящая главная —
 // частичный уникальный индекс просто не дал бы создать тестовую.
-if (!process.env.DATABASE_URL_TEST) {
+const testUrl = process.env.DATABASE_URL_TEST
+
+if (!testUrl) {
   throw new Error('DATABASE_URL_TEST не задан — тесты отказываются работать с рабочей базой')
 }
 
-process.env.DATABASE_URL = process.env.DATABASE_URL_TEST
+// Отдельная проверка на копипаст-опечатку в .env: предыдущая проверка не
+// заметила бы её, ведь переменная задана. Сравниваем строки как есть после
+// trim — без попытки умно распарсить имя базы, чтобы проверка честно
+// показывала, что именно она ловит, а не создавала ложное чувство надёжности.
+if (testUrl.trim() === process.env.DATABASE_URL?.trim()) {
+  throw new Error(
+    'DATABASE_URL_TEST совпадает с DATABASE_URL — тесты отказываются работать с рабочей базой',
+  )
+}
+
+process.env.DATABASE_URL = testUrl

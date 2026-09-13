@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ВАУ! НАУКА
 
-## Getting Started
+Сайт организатора праздников со встроенной CMS. Next.js (App Router) и PostgreSQL в одном приложении.
 
-First, run the development server:
+## Запуск в разработке
+
+Требуется Node.js ≥ 20.9.0.
+
+1. Скопировать `.env.example` в `.env` и заполнить реальными значениями (адрес базы данных, секрет подписи сессий и т.д.). Файл `.env` никогда не коммитится — он исключён из Git.
+2. Установить зависимости:
+
+   ```bash
+   npm install
+   ```
+
+3. Сгенерировать клиент Prisma — обязательно после установки и перед первой сборкой:
+
+   ```bash
+   npx dotenv -e .env -- npx prisma generate
+   ```
+
+   Это ручной шаг, а не `postinstall`-хук: Prisma 7 не подхватывает `.env` сама, поэтому `prisma generate`, выполненный автоматически при `npm install` без уже экспортированных переменных окружения, падает с ошибкой и ломает установку на чистом клоне и в CI. Без этого шага сборка упадёт с `Cannot find module '@/generated/prisma/client'`.
+
+4. Запустить сервер разработки:
+
+   ```bash
+   npm run dev
+   ```
+
+   Приложение поднимется на [http://localhost:7622](http://localhost:7622).
+
+## Тесты
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm test
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Тесты работают с отдельной базой `events_test`, а не с рабочей `events`: `tests/setup.ts` перед запуском перенаправляет `DATABASE_URL` на `DATABASE_URL_TEST` и отказывается работать, если `DATABASE_URL_TEST` не задан или совпадает с рабочим `DATABASE_URL`.
