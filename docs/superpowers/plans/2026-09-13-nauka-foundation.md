@@ -6,7 +6,7 @@
 
 **Architecture:** Одно Next.js-приложение (App Router) с Server Components по умолчанию. Доступ к PostgreSQL — только на сервере через singleton Prisma Client. Аутентификация — better-auth с сессиями в БД (не JWT), чтобы отключение пользователя немедленно прекращало действующую сессию. Инварианты, где проверка в коде создаёт гонку, обеспечиваются ограничениями PostgreSQL.
 
-**Tech Stack:** Next.js 16.3.5, React 19.3.0, TypeScript strict, Tailwind CSS 4.3.3, Prisma 7.10.0 (CLI и client), better-auth 1.7.4, Zod 4.6.4, Vitest 5.0.0, tsx 4.23.13.
+**Tech Stack:** Next.js 16.3.5, React 19.2.8 (версию задаёт Next), TypeScript strict, Tailwind CSS 4, Prisma 7.10.0 (CLI в devDependencies, client в dependencies), `@prisma/adapter-pg` 7.10.0 + `pg` 8.23.0, better-auth 1.7.4, Zod 4.6.4, Vitest 5.0.0, tsx 4.23.13.
 
 **Spec:** `docs/superpowers/specs/2026-09-13-nauka-cms-design.md`
 
@@ -29,6 +29,11 @@
 - **Ни одного `dangerouslySetInnerHTML`** в проекте.
 - **Язык интерфейса и контента — русский.** Сообщения об ошибках для пользователя — на русском.
 - **Node.js ≥ 20.9.0** (требование `next@16.3.5`). Фактически установлен v22.16.0.
+- **Конвенции Prisma 7 обязательны** — шестая версия писалась иначе, и примеры из памяти не заработают. Проверено по документации и по установленному пакету:
+  - `datasource` содержит **только** `provider`. URL базы задаётся в `prisma.config.ts`, а не в схеме.
+  - `generator client` использует провайдер **`prisma-client`** (не `prisma-client-js`), поле `output` **обязательно**.
+  - Клиент импортируется из сгенерированного каталога, а не из `@prisma/client`.
+  - **Driver adapter обязателен:** `new PrismaClient()` без адаптера — ошибка, свойство `datasourceUrl` устарело и тоже даёт ошибку. Для PostgreSQL используется `PrismaPg` из `@prisma/adapter-pg`.
 
 ---
 
@@ -174,13 +179,17 @@ git commit -m "feat: создан проект Next.js 16 с зафиксиро�
 - Create: `frontend/lib/db.ts`
 - Create: `frontend/vitest.config.ts`
 - Create: `frontend/tests/setup.ts`
+- Create: `frontend/tests/stubs/server-only.ts` (пустой файл)
+- Create: `frontend/prisma/schema.prisma` (минимальный, модели добавит Task 3)
+- Create: `frontend/prisma.config.ts`
 - Test: `frontend/tests/db-connection.test.ts`
 
 **Interfaces:**
 - Consumes: каталог `frontend` из Task 1
 - Produces:
-  - `lib/env.ts` → `export const env: { DATABASE_URL: string; BASE_URL: string; MEDIA_ROOT: string; BETTER_AUTH_SECRET: string }`
-  - `lib/db.ts` → `export const prisma: PrismaClient`
+  - `lib/env.ts` → `export const env: { DATABASE_URL: string; DATABASE_URL_TEST?: string; BASE_URL: string; MEDIA_ROOT: string; BETTER_AUTH_SECRET: string; BETTER_AUTH_URL: string }`
+  - `lib/db.ts` → `export const prisma: PrismaClient` (клиент импортируется из `@/generated/prisma/client`, создаётся с адаптером `PrismaPg`)
+  - сгенерированный клиент Prisma в `frontend/generated/prisma/` (в Git не попадает)
 
 - [ ] **Шаг 1: Проверить, что `.env` исключён из Git**
 
@@ -204,7 +213,7 @@ DATABASE_URL="postgresql://ПОЛЬЗОВАТЕЛЬ:ПАРОЛЬ@localhost:5432/
 DATABASE_URL_TEST="postgresql://ПОЛЬЗОВАТЕЛЬ:ПАРОЛЬ@localhost:5432/ИМЯ_БАЗЫ_test?schema=public"
 
 # Базовый адрес сайта. На проде — реальный домен, не localhost.
-BASE_URL="http://localhost:3000"
+BASE_URL="http://localhost:7622"
 
 # Каталог хранения загруженных файлов. Должен быть ВНЕ frontend/,
 # иначе пересборка Next.js его затрёт.
@@ -212,20 +221,20 @@ MEDIA_ROOT="../media"
 
 # Секрет подписи сессий. Сгенерировать: openssl rand -base64 32
 BETTER_AUTH_SECRET="ЗАМЕНИТЬ_НА_СЛУЧАЙНУЮ_СТРОКУ"
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_URL="http://localhost:7622"
 ```
 
 - [ ] **Шаг 3: Создать реальный `.env`**
 
-`frontend/.env` — реквизиты предоставлены заказчиком: база `events`, пользователь `postgres`, пароль `REDACTED`. Спецсимволов, требующих кодирования, в пароле нет.
+`frontend/.env` — реквизиты предоставлены заказчиком: база `events`, пользователь `postgres`. Пароль заказчик передаёт отдельно — подставить его вместо ПАРОЛЬ, не записывая в этот документ. Спецсимволы кодировать percent-encoding.
 
 ```bash
-DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events?schema=public"
-DATABASE_URL_TEST="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public"
-BASE_URL="http://localhost:3000"
+DATABASE_URL="postgresql://postgres:ПАРОЛЬ@localhost:5432/events?schema=public"
+DATABASE_URL_TEST="postgresql://postgres:ПАРОЛЬ@localhost:5432/events_test?schema=public"
+BASE_URL="http://localhost:7622"
 MEDIA_ROOT="../media"
 BETTER_AUTH_SECRET="<подставить вывод команды ниже>"
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_URL="http://localhost:7622"
 ```
 
 Секрет сгенерировать командой, не придумывать:
@@ -286,9 +295,24 @@ export default defineConfig({
     fileParallelism: false,
   },
   resolve: {
-    alias: { '@': path.resolve(__dirname, './') },
+    alias: {
+      '@': path.resolve(__dirname, './'),
+      // Пакет server-only состоит из безусловного throw и обезвреживается
+      // только условием разрешения react-server, которое выставляет Next.js
+      // при сборке RSC. Vitest его не выставляет, поэтому любой импорт
+      // lib/env.ts или lib/db.ts падал бы с сообщением про Client Component,
+      // не имеющим отношения к настоящей причине. Подменяем пустышкой.
+      'server-only': path.resolve(__dirname, './tests/stubs/server-only.ts'),
+    },
   },
 })
+```
+
+Создать пустой файл-заглушку:
+
+```bash
+mkdir -p tests/stubs
+echo "// Заглушка server-only для тестовой среды. Намеренно пуст." > tests/stubs/server-only.ts
 ```
 
 И `frontend/tests/setup.ts`:
@@ -354,7 +378,10 @@ export const env = parsed.data
 
 ```ts
 import 'server-only'
-import { PrismaClient } from '@prisma/client'
+// Prisma 7: клиент импортируется из СГЕНЕРИРОВАННОГО каталога, а не из
+// пакета '@prisma/client'. Путь задан полем output в prisma/schema.prisma.
+import { PrismaClient } from '@/generated/prisma/client'
+import { PrismaPg } from '@prisma/adapter-pg'
 import { env } from './env'
 
 // В dev-режиме Next.js перезагружает модули при каждом изменении файла.
@@ -362,27 +389,94 @@ import { env } from './env'
 // и PostgreSQL быстро упёрся бы в лимит подключений.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    datasources: { db: { url: env.DATABASE_URL } },
+function createClient() {
+  // Driver adapter в Prisma 7 обязателен: new PrismaClient() без него — ошибка,
+  // а устаревшее свойство datasourceUrl тоже даёт ошибку.
+  const adapter = new PrismaPg({ connectionString: env.DATABASE_URL })
+
+  return new PrismaClient({
+    adapter,
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   })
+}
+
+export const prisma = globalForPrisma.prisma ?? createClient()
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 ```
 
 Уровень логирования `query` намеренно не включён: Prisma печатает параметры запросов, а среди них бывают пароли и персональные данные заявок.
 
-- [ ] **Шаг 8: Инициализировать Prisma и запустить тест**
+- [ ] **Шаг 7a: Установить driver adapter для PostgreSQL**
 
 ```bash
-npx prisma init --datasource-provider postgresql --output ../node_modules/.prisma/client
+npm i --save-exact @prisma/adapter-pg@7.10.0 pg@8.23.0
+```
+
+Версия адаптера совпадает с ядром Prisma намеренно — это одна выпускаемая пара. Обе зависимости рантаймовые (`dependencies`), в отличие от CLI `prisma`, который живёт в `devDependencies`.
+
+- [ ] **Шаг 8: Создать схему Prisma и `prisma.config.ts`**
+
+**Не запускать `prisma init`.** Эта команда создаёт собственный `.env` с плейсхолдером `DATABASE_URL`, а `.env` уже создан на шаге 3 — возможна вторая строка `DATABASE_URL`, и какая победит, зависит от парсера.
+
+Конвенции ниже проверены по документации Prisma 7 и по содержимому установленного пакета; они **отличаются** от привычных по шестой версии. Писать по памяти нельзя.
+
+`frontend/prisma/schema.prisma` — два блока, без моделей (модели добавит Task 3):
+
+```prisma
+generator client {
+  // Prisma 7: провайдер prisma-client (НЕ prisma-client-js), output обязателен.
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  // Prisma 7: в блоке остаётся ТОЛЬКО provider.
+  // URL задаётся в prisma.config.ts.
+  provider = "postgresql"
+}
+```
+
+`frontend/prisma.config.ts` — в корне `frontend`, рядом с `package.json`:
+
+```ts
+import { defineConfig, env } from 'prisma/config'
+
+// Prisma 7 перенесла адреса подключения из схемы сюда.
+// Подпуть 'prisma/config' реэкспортирует defineConfig и env — проверено
+// в node_modules/prisma/config.d.ts установленной версии 7.10.0.
+export default defineConfig({
+  datasource: {
+    url: env('DATABASE_URL'),
+  },
+})
+```
+
+Исключить сгенерированный клиент из Git — это артефакт сборки, а не исходный код. Добавить в `frontend/.gitignore`:
+
+```
+# сгенерированный клиент Prisma (создаётся командой prisma generate)
+/generated/
+```
+
+Чтобы сборка работала на свежем клоне, добавить в `frontend/package.json`:
+
+```json
+{ "scripts": { "postinstall": "prisma generate" } }
+```
+
+Затем:
+
+```bash
 npx prisma generate
 npm test
 ```
 
-Ожидается PASS обоих тестов. Второй тест подтверждает **реальное** подключение к `events`, а не предположение о нём.
+Ожидается PASS обоих тестов. Второй тест подтверждает **реальное** подключение к PostgreSQL, а не предположение о нём.
+
+Две ситуации и что делать:
+- Если `prisma generate` откажется работать на схеме без моделей — добавить временную модель `model _Bootstrap { id String @id }`, сгенерировать клиент и удалить её в Task 3.
+- Если `postinstall` упадёт из-за отсутствия переменных окружения при установке — убрать этот скрипт и вместо него задокументировать в отчёте, что перед сборкой требуется ручной `npx prisma generate`. Не заставлять установку зависеть от наличия `.env`.
 
 - [ ] **Шаг 9: Проверить, что `.env` не попал в индекс**
 
@@ -425,14 +519,16 @@ npx prisma db pull --print
 
 `frontend/prisma/schema.prisma`:
 
+Блоки `generator` и `datasource` уже созданы в Task 2 по конвенциям Prisma 7 — **оставить их как есть**, не переписывать под шестую версию:
+
 ```prisma
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -768,20 +864,10 @@ Prisma создаст shadow database для проверки дрейфа сх�
 
 - [ ] **Шаг 4a: Применить миграции к тестовой базе**
 
-Добавить в `frontend/package.json`:
-
-```json
-{
-  "scripts": {
-    "test:db": "dotenv -e .env -- cross-env-shell \"DATABASE_URL=$DATABASE_URL_TEST prisma migrate deploy\""
-  }
-}
-```
-
-Проще и без лишней зависимости — выполнить напрямую:
+Выполнить напрямую, с inline-переменной окружения. Отдельный npm-скрипт для этого не заводится: он потребовал бы `cross-env-shell`, которого нет в зависимостях.
 
 ```bash
-DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public" \
+DATABASE_URL="postgresql://postgres:ПАРОЛЬ@localhost:5432/events_test?schema=public" \
   npx prisma migrate deploy
 ```
 
@@ -793,11 +879,13 @@ DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=p
 
 ```ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { PrismaClient } from '@prisma/client'
 
-// tests/setup.ts уже перенаправил DATABASE_URL на events_test,
+// Используется тот же singleton, что и в приложении: tests/setup.ts уже
+// перенаправил DATABASE_URL на events_test до загрузки этого модуля,
 // поэтому клиент подключается к тестовой базе, а не к рабочей.
-const prisma = new PrismaClient()
+// Собственный new PrismaClient() здесь не создаётся: в Prisma 7 он требует
+// driver adapter, и дублировать его настройку в тестах незачем.
+import { prisma } from '@/lib/db'
 
 beforeAll(async () => {
   await prisma.page.deleteMany({ where: { slug: { startsWith: 'test-' } } })
@@ -874,7 +962,7 @@ CREATE UNIQUE INDEX "Page_isHome_unique" ON "Page" ("isHome") WHERE "isHome" = t
 ```bash
 npx dotenv -e .env -- npx prisma migrate deploy
 
-DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public" \
+DATABASE_URL="postgresql://postgres:ПАРОЛЬ@localhost:5432/events_test?schema=public" \
   npx prisma migrate deploy
 ```
 
@@ -908,10 +996,11 @@ git commit -m "feat: схема CMS и инвариант единственно
 
 **Files:**
 - Create: `frontend/lib/auth.ts`
-- Create: `frontend/lib/auth-client.ts`
 - Create: `frontend/app/api/auth/[...all]/route.ts`
 - Create: `frontend/server/auth/session.ts`
 - Test: `frontend/tests/auth-guards.test.ts`
+
+(`lib/auth-client.ts` создаётся в Task 6 — здесь он не нужен.)
 
 **Interfaces:**
 - Consumes: `prisma` из `lib/db.ts`, `env` из `lib/env.ts`, модели `User`/`Session`/`Account` из Task 3
@@ -926,7 +1015,13 @@ git commit -m "feat: схема CMS и инвариант единственно
 
 - [ ] **Шаг 1: Свериться с документацией better-auth**
 
-Перед написанием конфигурации проверить актуальный API версии 1.7.4 через Context7 (`mcp__plugin_context7_context7__resolve-library-id` → `query-docs`) по темам: Prisma adapter, email and password, session management, rate limiting.
+Перед написанием конфигурации проверить актуальный API версии 1.7.4 через Context7 (`mcp__plugin_context7_context7__resolve-library-id` → `query-docs`) по темам: Prisma adapter, email and password, session management, rate limiting, additional fields.
+
+Три пункта требуют явной сверки, потому что от них зависит схема БД:
+
+1. **Модель `RateLimit`** — какие имена и типы полей ожидает `rateLimit.storage: 'database'`. В Task 3 заведены `key`, `count`, `lastReset: BigInt`; если документация требует другого — привести схему в соответствие миграцией.
+2. **`additionalFields` с типом `string` поверх Prisma-enum `Role`.** Проверить, что адаптер корректно пишет и читает enum-колонку. Если нет — колонку `role` сделать `String` с проверкой значений на уровне приложения, зафиксировав это в отчёте.
+3. **Имя пакета next-плагина** — `better-auth/next-js` и экспорт `toNextJsHandler`.
 
 Не писать конфигурацию по памяти: ТЗ п. 14 прямо требует сверяться с документацией фактически установленной версии, а не с устаревшими примерами.
 
@@ -943,6 +1038,13 @@ const mockSession = vi.hoisted(() => ({ value: null as unknown }))
 
 vi.mock('@/lib/auth', () => ({
   auth: { api: { getSession: async () => mockSession.value } },
+}))
+
+// getSessionUser вызывает headers() ДО обращения к auth. Вне контекста
+// запроса Next это исключение, и тест падал бы по причине, не имеющей
+// отношения к проверяемой логике охраны ролей.
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers(),
 }))
 
 beforeEach(() => {
@@ -1225,13 +1327,41 @@ async function main() {
     process.exit(1)
   }
 
-  // Пароль хешируется самим better-auth — собственную криптографию
-  // ТЗ п. 2 запрещает разрабатывать.
-  await auth.api.signUpEmail({ body: { email, password, name } })
+  // ВНИМАНИЕ: `auth.api.signUpEmail` здесь НЕ РАБОТАЕТ, и это установлено
+  // чтением исходников установленной версии, а не предположением.
+  // Причины две, каждой достаточно:
+  //   1. `disableSignUp: true` проверяется ВНУТРИ обработчика регистрации,
+  //      поэтому серверный вызов отклоняется так же, как HTTP-запрос;
+  //   2. `parseInputData` принудительно выставляет `role` в значение по
+  //      умолчанию `EDITOR`, потому что поле помечено `input: false`.
+  //
+  // Рабочий путь — внутренний адаптер: `internalAdapter.createUser`
+  // передаёт данные напрямую, минуя `parseUserInput`, поэтому роль
+  // назначается сразу и правильно.
+  //
+  // Точные имена методов и форму аргументов СВЕРИТЬ с установленной
+  // версией better-auth 1.7.4 перед написанием: ниже показан замысел,
+  // а не проверенная сигнатура.
+  const ctx = await auth.$context
 
-  // Роль назначается отдельно: поле помечено input: false и через
-  // публичный API его установить нельзя.
-  await prisma.user.update({ where: { email }, data: { role: 'ADMIN', isActive: true } })
+  // Хеширование пароля выполняет сам better-auth — собственную криптографию
+  // ТЗ п. 2 разрабатывать запрещает.
+  const passwordHash = await ctx.password.hash(password)
+
+  const user = await ctx.internalAdapter.createUser({
+    email,
+    name,
+    emailVerified: false,
+    role: 'ADMIN',
+    isActive: true,
+  })
+
+  await ctx.internalAdapter.createAccount({
+    userId: user.id,
+    providerId: 'credential',
+    accountId: user.id,
+    password: passwordHash,
+  })
 
   console.log(`Администратор ${email} создан`)
   await prisma.$disconnect()
@@ -1251,10 +1381,14 @@ main().catch(async (e) => {
 ```json
 {
   "scripts": {
-    "create-admin": "dotenv -e .env -- tsx scripts/create-admin.ts"
+    "create-admin": "dotenv -e .env -- node --conditions=react-server --import tsx scripts/create-admin.ts"
   }
 }
 ```
+
+Флаг `--conditions=react-server` обязателен. Скрипт импортирует `lib/db` → `lib/env`, а те начинаются с `import 'server-only'`. Этот пакет состоит из безусловного `throw` и обезвреживается единственным способом — условием разрешения `react-server`, которое Next.js выставляет при сборке RSC, а обычный Node — нет. Без флага скрипт падает с сообщением про Client Component, не имеющим отношения к настоящей причине.
+
+Проверить, что флаг подействовал, нужно на шаге 3: если скрипт падает с текстом «This module cannot be imported from a Client Component module» — флаг не сработал под `tsx`. Запасной вариант: создать `scripts/stub-server-only.mjs`, регистрирующий подмену модуля, и запускать `node --import ./scripts/stub-server-only.mjs --import tsx …`. О применении запасного варианта сообщить в отчёте.
 
 - [ ] **Шаг 3: Проверить создание администратора вручную**
 
@@ -1308,6 +1442,7 @@ git commit -m "feat: CLI создания первого администрат�
 - Create: `frontend/lib/auth-client.ts`
 - Create: `frontend/Components/auth/LoginForm.tsx`
 - Create: `frontend/app/(admin)/admin/layout.tsx`
+- Create: `frontend/app/(admin)/admin/page.tsx`
 
 **Interfaces:**
 - Consumes: `auth` из `lib/auth.ts`, `getSessionUser` из `server/auth/session.ts`
@@ -1456,6 +1591,45 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
 Layout **не** выполняет проверку доступа. Она живёт в серверных функциях каждого раздела: Server Action публикуется как собственный endpoint и вызывается напрямую, минуя любой layout.
 
+- [ ] **Шаг 4a: Создать минимальную страницу панели**
+
+Без неё успешный вход ведёт на несуществующий `/admin` и проверить результат невозможно. Полноценная панель приходит следующим планом.
+
+`frontend/app/(admin)/admin/page.tsx`:
+
+```tsx
+import { redirect } from 'next/navigation'
+import { getSessionUser } from '@/server/auth/session'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export const metadata = {
+  title: 'Панель управления',
+  robots: { index: false, follow: false },
+}
+
+export default async function AdminHomePage() {
+  const user = await getSessionUser()
+
+  // Проверка здесь, а не в layout: layout не выполняется при прямом
+  // обращении к Server Action, поэтому полагаться на него нельзя.
+  if (!user || !user.isActive) redirect('/admin/login')
+
+  return (
+    <main className="mx-auto max-w-3xl p-6">
+      <h1 className="text-2xl font-bold">Панель управления</h1>
+      <p className="mt-2 text-slate-600">
+        {user.name} · {user.email} · роль: {user.role}
+      </p>
+      <p className="mt-6 rounded-lg bg-amber-50 p-4 text-sm text-amber-900">
+        Разделы управления содержимым появятся на следующем этапе.
+      </p>
+    </main>
+  )
+}
+```
+
 - [ ] **Шаг 5: Проверить вход вручную**
 
 ```bash
@@ -1463,7 +1637,7 @@ cd frontend
 npm run dev
 ```
 
-Открыть `http://localhost:3000/admin/login`, войти под созданным администратором. Ожидается переход на `/admin`.
+Открыть `http://localhost:7622/admin/login`, войти под созданным администратором. Ожидается переход на `/admin`.
 
 Затем проверить отзыв сессии — ключевое требование ТЗ:
 
