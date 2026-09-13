@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
 import { prisma } from '../lib/db'
 import { auth } from '../lib/auth'
+import { normalizeEmail } from '../lib/normalize-email'
 
 // Ввод пароля без эха.
 //
@@ -75,7 +76,7 @@ function askHidden(question: string): Promise<string> {
 async function main() {
   const rl = createInterface({ input: stdin, output: stdout })
 
-  const email = (await rl.question('Email администратора: ')).trim().toLowerCase()
+  const email = normalizeEmail(await rl.question('Email администратора: '))
   const name = (await rl.question('Имя: ')).trim()
   rl.close()
 

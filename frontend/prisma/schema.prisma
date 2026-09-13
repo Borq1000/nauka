@@ -32,7 +32,15 @@ enum InquiryStatus {
 
 model User {
   id            String    @id @default(uuid())
-  email         String    @unique          // хранится в нижнем регистре
+  email         String    @unique          // хранится в нижнем регистре — см. lib/normalize-email.ts
+  // Уникальность на уровне PostgreSQL всё равно регистрозависима (обычный
+  // btree-индекс от @unique). Реальную регистронезависимость обеспечивает
+  // рукописная миграция user_email_case_insensitive — функциональный
+  // уникальный индекс по LOWER(email), невыразимый в schema.prisma (тот же
+  // приём, что и Page_isHome_unique). Это не полировка: better-auth ищет
+  // пользователя при входе через email.toLowerCase() + точное сравнение,
+  // поэтому без этого индекса строка с заглавной буквой в email была бы
+  // не только дублируема, но и не входима никогда.
   emailVerified Boolean   @default(false)
   name          String
   image         String?

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { authClient } from '@/lib/auth-client'
+import { normalizeEmail } from '@/lib/normalize-email'
 
 export function LoginForm() {
   const router = useRouter()
@@ -16,21 +17,34 @@ export function LoginForm() {
     setPending(true)
     setError(null)
 
-    const { error } = await authClient.signIn.email({
-      email: email.trim().toLowerCase(),
-      password,
-    })
+    // M-6 (финальное ревью): раньше setPending(false) стоял только в ветке
+    // `if (error)`. Штатный путь better-auth возвращает {error}, а не
+    // бросает — но сетевой сбой (offline, обрыв соединения) отклоняет сам
+    // промис `signIn.email`, минуя эту ветку целиком, и кнопка оставалась
+    // задизейбленной навсегда без единого сообщения. try/catch снимает
+    // pending на любом исходе; сообщение в catch намеренно такое же общее,
+    // как и для неверного пароля — оно не должно раскрывать, что именно
+    // сломалось (сеть, сервер, таймаут).
+    try {
+      const { error } = await authClient.signIn.email({
+        email: normalizeEmail(email),
+        password,
+      })
 
-    if (error) {
-      // Намеренно не уточняем, неверен email или пароль:
-      // это позволило бы перебором выяснить, какие адреса зарегистрированы.
+      if (error) {
+        // Намеренно не уточняем, неверен email или пароль:
+        // это позволило бы перебором выяснить, какие адреса зарегистрированы.
+        setError('Неверный email или пароль')
+        setPending(false)
+        return
+      }
+
+      router.push('/admin')
+      router.refresh()
+    } catch {
       setError('Неверный email или пароль')
       setPending(false)
-      return
     }
-
-    router.push('/admin')
-    router.refresh()
   }
 
   return (
