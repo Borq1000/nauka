@@ -124,6 +124,7 @@ model Media {
   servicesOg   Service[] @relation("ServiceOg")
   postsCover   Post[]    @relation("PostCover")
   postsOg      Post[]    @relation("PostOg")
+  siteSettingsLogo SiteSettings[] @relation("SiteSettingsLogo")
 }
 
 // ---------- Обычные страницы ----------
@@ -153,6 +154,8 @@ model Page {
   ogMedia        Media?        @relation("PageOg", fields: [ogMediaId], references: [id], onDelete: Restrict)
 
   @@index([status, publishedAt])
+  @@index([coverMediaId])
+  @@index([ogMediaId])
 }
 
 // ---------- Услуги ----------
@@ -192,6 +195,8 @@ model Service {
 
   @@index([parentId, sortOrder])
   @@index([status, publishedAt])
+  @@index([coverMediaId])
+  @@index([ogMediaId])
 }
 
 // ---------- Блог ----------
@@ -222,6 +227,8 @@ model Post {
 
   @@index([status, publishedAt])
   @@index([authorId])
+  @@index([coverMediaId])
+  @@index([ogMediaId])
 }
 
 model Category {
@@ -266,6 +273,7 @@ model Inquiry {
   service     Service?      @relation(fields: [serviceId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+  @@index([serviceId])
 }
 
 // ---------- Настройки, меню, редиректы ----------
@@ -283,6 +291,8 @@ model SiteSettings {
   seoTitle       String?
   seoDescription String?
   updatedAt      DateTime @updatedAt
+
+  logoMedia      Media?   @relation("SiteSettingsLogo", fields: [logoMediaId], references: [id], onDelete: Restrict)
 }
 
 model Menu {

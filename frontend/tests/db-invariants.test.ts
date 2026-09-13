@@ -9,10 +9,12 @@ import { prisma } from '@/lib/db'
 
 beforeAll(async () => {
   await prisma.page.deleteMany({ where: { slug: { startsWith: 'test-' } } })
+  await prisma.service.deleteMany({ where: { slug: { startsWith: 'test-' } } })
 })
 
 afterAll(async () => {
   await prisma.page.deleteMany({ where: { slug: { startsWith: 'test-' } } })
+  await prisma.service.deleteMany({ where: { slug: { startsWith: 'test-' } } })
   await prisma.$disconnect()
 })
 
@@ -39,14 +41,17 @@ describe('инварианты уровня базы данных', () => {
   })
 
   it('не допускает двух услуг с одинаковым path', async () => {
-    const a = await prisma.service.create({
+    await prisma.service.create({
       data: { title: 'Наука', slug: 'test-science', path: 'test-science' },
     })
+    // Отдельного cleanup здесь больше нет: если это упадёт по-настоящему
+    // (уникальность path не сработает), строка останется в базе, но её
+    // подчистит beforeAll/afterAll выше при следующем запуске — тест не
+    // должен маскировать свой собственный провал ошибкой очистки.
     await expect(
       prisma.service.create({
         data: { title: 'Дубль', slug: 'test-science-2', path: 'test-science' },
       }),
     ).rejects.toThrow()
-    await prisma.service.delete({ where: { id: a.id } })
   })
 })
