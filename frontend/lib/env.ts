@@ -4,13 +4,17 @@ import { z } from 'zod'
 // `next build` устанавливает NODE_ENV=production даже локально (проверено:
 // `npm run build` без TRUST_PROXY_SETS_CLIENT_IP падал бы, хотя развёртывание
 // ещё не произошло, а машина, на которой собирают образ, может быть не той,
-// на которой его потом запускают). Next.js параллельно ставит
-// NEXT_PHASE=phase-production-build именно на время сборки (см.
-// node_modules/next/dist/shared/lib/constants.js установленной версии,
-// PHASE_PRODUCTION_BUILD) и переключает его на phase-production-server, как
-// только стартует `next start`. Guard обязан отличать «собираем образ» от
-// «обслуживаем реальные запросы» — иначе он либо бесполезен (всегда молчит),
-// либо ломает обычную сборку на машине разработчика.
+// на которой его потом запускают). Next.js на время сборки дополнительно
+// ставит NEXT_PHASE=phase-production-build — это ЕДИНСТВЕННОЕ место, где
+// NEXT_PHASE вообще присваивается (проверено: `grep -rn "NEXT_PHASE\s*="
+// node_modules/next/` в установленной 16.3.5 даёт ровно одно совпадение,
+// в build/index.js). При `next start` переменная НЕ устанавливается ни во
+// что — она просто не определена, никакого "phase-production-server" нигде
+// не пишется. Поэтому условие ниже — отрицание (`!== 'phase-production-build'`),
+// а не сравнение с каким-либо значением "рантайма": так неопределённая на
+// старте переменная тоже проходит проверку и включает guard. Написать это
+// как `=== 'phase-production-server'` было бы неверно и тихо отключило бы
+// guard целиком, потому что такого значения Next никогда не присваивает.
 function isProductionServerRuntime(): boolean {
   return process.env.NODE_ENV === 'production' && process.env.NEXT_PHASE !== 'phase-production-build'
 }
