@@ -1,0 +1,32 @@
+# зависимости
+node_modules/
+
+# сборка Next.js
+.next/
+out/
+build/
+next-env.d.ts
+
+# секреты — никогда не коммитить
+.env
+.env.*
+!.env.example
+
+# загруженные медиафайлы (хранятся вне репозитория)
+media/
+uploads/
+
+# логи и кеши
+*.log
+npm-debug.log*
+.turbo/
+*.tsbuildinfo
+
+# системное
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
