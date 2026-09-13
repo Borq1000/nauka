@@ -213,7 +213,7 @@ DATABASE_URL="postgresql://ПОЛЬЗОВАТЕЛЬ:ПАРОЛЬ@localhost:5432/
 DATABASE_URL_TEST="postgresql://ПОЛЬЗОВАТЕЛЬ:ПАРОЛЬ@localhost:5432/ИМЯ_БАЗЫ_test?schema=public"
 
 # Базовый адрес сайта. На проде — реальный домен, не localhost.
-BASE_URL="http://localhost:3000"
+BASE_URL="http://localhost:7622"
 
 # Каталог хранения загруженных файлов. Должен быть ВНЕ frontend/,
 # иначе пересборка Next.js его затрёт.
@@ -221,20 +221,20 @@ MEDIA_ROOT="../media"
 
 # Секрет подписи сессий. Сгенерировать: openssl rand -base64 32
 BETTER_AUTH_SECRET="ЗАМЕНИТЬ_НА_СЛУЧАЙНУЮ_СТРОКУ"
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_URL="http://localhost:7622"
 ```
 
 - [ ] **Шаг 3: Создать реальный `.env`**
 
-`frontend/.env` — реквизиты предоставлены заказчиком: база `events`, пользователь `postgres`, пароль `REDACTED`. Спецсимволов, требующих кодирования, в пароле нет.
+`frontend/.env` — реквизиты предоставлены заказчиком: база `events`, пользователь `postgres`. Пароль заказчик передаёт отдельно — подставить его вместо ПАРОЛЬ, не записывая в этот документ. Спецсимволы кодировать percent-encoding.
 
 ```bash
-DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events?schema=public"
-DATABASE_URL_TEST="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public"
-BASE_URL="http://localhost:3000"
+DATABASE_URL="postgresql://postgres:ПАРОЛЬ@localhost:5432/events?schema=public"
+DATABASE_URL_TEST="postgresql://postgres:ПАРОЛЬ@localhost:5432/events_test?schema=public"
+BASE_URL="http://localhost:7622"
 MEDIA_ROOT="../media"
 BETTER_AUTH_SECRET="<подставить вывод команды ниже>"
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_URL="http://localhost:7622"
 ```
 
 Секрет сгенерировать командой, не придумывать:
@@ -867,7 +867,7 @@ Prisma создаст shadow database для проверки дрейфа сх�
 Выполнить напрямую, с inline-переменной окружения. Отдельный npm-скрипт для этого не заводится: он потребовал бы `cross-env-shell`, которого нет в зависимостях.
 
 ```bash
-DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public" \
+DATABASE_URL="postgresql://postgres:ПАРОЛЬ@localhost:5432/events_test?schema=public" \
   npx prisma migrate deploy
 ```
 
@@ -962,7 +962,7 @@ CREATE UNIQUE INDEX "Page_isHome_unique" ON "Page" ("isHome") WHERE "isHome" = t
 ```bash
 npx dotenv -e .env -- npx prisma migrate deploy
 
-DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public" \
+DATABASE_URL="postgresql://postgres:ПАРОЛЬ@localhost:5432/events_test?schema=public" \
   npx prisma migrate deploy
 ```
 
@@ -1609,7 +1609,7 @@ cd frontend
 npm run dev
 ```
 
-Открыть `http://localhost:3000/admin/login`, войти под созданным администратором. Ожидается переход на `/admin`.
+Открыть `http://localhost:7622/admin/login`, войти под созданным администратором. Ожидается переход на `/admin`.
 
 Затем проверить отзыв сессии — ключевое требование ТЗ:
 
