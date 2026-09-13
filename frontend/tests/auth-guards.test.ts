@@ -61,4 +61,17 @@ describe('requireRole', () => {
     const user = await requireRole('EDITOR')
     expect(user.role).toBe('ADMIN')
   })
+
+  // I-4 (ревью round 1): requireRole('EDITOR') раньше был байт-в-байт эквивалентен
+  // requireUser() — не выполнял вообще никакого сравнения и пропускал любое
+  // значение role, включая нераспознанное. Этот тест ловит именно такую регрессию:
+  // он падает и до, и после исправления одинаково для ADMIN/EDITOR, но должен
+  // отличать их от роли, которой нет в enum.
+  it('отклоняет роль, которая не является ни ADMIN, ни EDITOR', async () => {
+    mockSession.value = {
+      user: { id: 'u1', email: 'a@b.c', name: 'Хз', role: 'MODERATOR', isActive: true },
+    }
+    const { requireRole } = await import('@/server/auth/session')
+    await expect(requireRole('EDITOR')).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
 })
