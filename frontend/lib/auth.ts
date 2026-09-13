@@ -136,6 +136,16 @@ export const auth = betterAuth({
     // headers), их и не будет. Это тот же самый признак, которым в
     // better-auth/dist/integrations/next-js.mjs пользуется собственный
     // плагин nextCookies для того же различения.
+    //
+    // Плата за это (ревью round 2, item 4 / round 3, item 4): прямые вызовы
+    // auth.api.* полностью обходят эту проверку — так и задумано, иначе
+    // вернулась бы регрессия выше. Единственный сегодняшний прямой вызов —
+    // чтение в server/auth/session.ts, которое классифицирует isActive само.
+    // НО если когда-нибудь какой-то server action вызовет auth.api.updateUser,
+    // auth.api.changePassword и т.п. НАПРЯМУЮ (не через HTTP), эта проверка их
+    // не увидит вообще. Любой такой код обязан сначала пройти через
+    // requireUser()/requireRole() из server/auth/session.ts — это единственное
+    // место, которое проверяет isActive для прямых вызовов.
     before: createAuthMiddleware(async (ctx) => {
       if (!('_flag' in ctx) || ctx._flag !== 'router') return
       if (
