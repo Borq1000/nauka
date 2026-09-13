@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 7622",
     "lint": "eslint",
-    "test": "dotenv -e .env -- vitest run"
+    "test": "dotenv -e .env -- vitest run",
+    "create-admin": "dotenv -e .env -- node --require ./scripts/stub-server-only.cjs --import tsx scripts/create-admin.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",
