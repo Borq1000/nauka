@@ -174,6 +174,8 @@ git commit -m "feat: создан проект Next.js 16 с зафиксиро�
 - Create: `frontend/lib/db.ts`
 - Create: `frontend/vitest.config.ts`
 - Create: `frontend/tests/setup.ts`
+- Create: `frontend/tests/stubs/server-only.ts` (пустой файл)
+- Create: `frontend/prisma/schema.prisma` (минимальный, модели добавит Task 3)
 - Test: `frontend/tests/db-connection.test.ts`
 
 **Interfaces:**
@@ -286,9 +288,24 @@ export default defineConfig({
     fileParallelism: false,
   },
   resolve: {
-    alias: { '@': path.resolve(__dirname, './') },
+    alias: {
+      '@': path.resolve(__dirname, './'),
+      // Пакет server-only состоит из безусловного throw и обезвреживается
+      // только условием разрешения react-server, которое выставляет Next.js
+      // при сборке RSC. Vitest его не выставляет, поэтому любой импорт
+      // lib/env.ts или lib/db.ts падал бы с сообщением про Client Component,
+      // не имеющим отношения к настоящей причине. Подменяем пустышкой.
+      'server-only': path.resolve(__dirname, './tests/stubs/server-only.ts'),
+    },
   },
 })
+```
+
+Создать пустой файл-заглушку:
+
+```bash
+mkdir -p tests/stubs
+echo "// Заглушка server-only для тестовой среды. Намеренно пуст." > tests/stubs/server-only.ts
 ```
 
 И `frontend/tests/setup.ts`:
@@ -374,15 +391,36 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 
 Уровень логирования `query` намеренно не включён: Prisma печатает параметры запросов, а среди них бывают пароли и персональные данные заявок.
 
-- [ ] **Шаг 8: Инициализировать Prisma и запустить тест**
+- [ ] **Шаг 8: Создать минимальную схему Prisma вручную**
+
+**Не запускать `prisma init`.** Эта команда создаёт собственный `.env` с плейсхолдером `DATABASE_URL`, а `.env` уже создан на шаге 3 — возможна вторая строка `DATABASE_URL`, и какая победит, зависит от парсера.
+
+Перед написанием блока `generator` **сверить его синтаксис с документацией установленной Prisma 7.10.0** через Context7 (`mcp__plugin_context7_context7__resolve-library-id` → `query-docs`, тема «generator configuration», «prisma-client generator output»). В Prisma 7 сосуществуют генератор `prisma-client-js` и новый `prisma-client` с обязательным полем `output`; написанное по памяти может не собраться.
+
+Создать `frontend/prisma/schema.prisma` с двумя блоками, без моделей — модели добавит Task 3:
+
+```prisma
+generator client {
+  // ВНИМАНИЕ: синтаксис сверить с документацией Prisma 7.10.0 перед записью
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+```
+
+Затем:
 
 ```bash
-npx prisma init --datasource-provider postgresql --output ../node_modules/.prisma/client
 npx prisma generate
 npm test
 ```
 
-Ожидается PASS обоих тестов. Второй тест подтверждает **реальное** подключение к `events`, а не предположение о нём.
+Ожидается PASS обоих тестов. Второй тест подтверждает **реальное** подключение к PostgreSQL, а не предположение о нём.
+
+Если `prisma generate` откажется работать на схеме без моделей — добавить одну временную модель `model _Bootstrap { id String @id }`, сгенерировать клиент и удалить её в Task 3.
 
 - [ ] **Шаг 9: Проверить, что `.env` не попал в индекс**
 
@@ -768,17 +806,7 @@ Prisma создаст shadow database для проверки дрейфа сх�
 
 - [ ] **Шаг 4a: Применить миграции к тестовой базе**
 
-Добавить в `frontend/package.json`:
-
-```json
-{
-  "scripts": {
-    "test:db": "dotenv -e .env -- cross-env-shell \"DATABASE_URL=$DATABASE_URL_TEST prisma migrate deploy\""
-  }
-}
-```
-
-Проще и без лишней зависимости — выполнить напрямую:
+Выполнить напрямую, с inline-переменной окружения. Отдельный npm-скрипт для этого не заводится: он потребовал бы `cross-env-shell`, которого нет в зависимостях.
 
 ```bash
 DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=public" \
@@ -908,10 +936,11 @@ git commit -m "feat: схема CMS и инвариант единственно
 
 **Files:**
 - Create: `frontend/lib/auth.ts`
-- Create: `frontend/lib/auth-client.ts`
 - Create: `frontend/app/api/auth/[...all]/route.ts`
 - Create: `frontend/server/auth/session.ts`
 - Test: `frontend/tests/auth-guards.test.ts`
+
+(`lib/auth-client.ts` создаётся в Task 6 — здесь он не нужен.)
 
 **Interfaces:**
 - Consumes: `prisma` из `lib/db.ts`, `env` из `lib/env.ts`, модели `User`/`Session`/`Account` из Task 3
@@ -926,7 +955,13 @@ git commit -m "feat: схема CMS и инвариант единственно
 
 - [ ] **Шаг 1: Свериться с документацией better-auth**
 
-Перед написанием конфигурации проверить актуальный API версии 1.7.4 через Context7 (`mcp__plugin_context7_context7__resolve-library-id` → `query-docs`) по темам: Prisma adapter, email and password, session management, rate limiting.
+Перед написанием конфигурации проверить актуальный API версии 1.7.4 через Context7 (`mcp__plugin_context7_context7__resolve-library-id` → `query-docs`) по темам: Prisma adapter, email and password, session management, rate limiting, additional fields.
+
+Три пункта требуют явной сверки, потому что от них зависит схема БД:
+
+1. **Модель `RateLimit`** — какие имена и типы полей ожидает `rateLimit.storage: 'database'`. В Task 3 заведены `key`, `count`, `lastReset: BigInt`; если документация требует другого — привести схему в соответствие миграцией.
+2. **`additionalFields` с типом `string` поверх Prisma-enum `Role`.** Проверить, что адаптер корректно пишет и читает enum-колонку. Если нет — колонку `role` сделать `String` с проверкой значений на уровне приложения, зафиксировав это в отчёте.
+3. **Имя пакета next-плагина** — `better-auth/next-js` и экспорт `toNextJsHandler`.
 
 Не писать конфигурацию по памяти: ТЗ п. 14 прямо требует сверяться с документацией фактически установленной версии, а не с устаревшими примерами.
 
@@ -943,6 +978,13 @@ const mockSession = vi.hoisted(() => ({ value: null as unknown }))
 
 vi.mock('@/lib/auth', () => ({
   auth: { api: { getSession: async () => mockSession.value } },
+}))
+
+// getSessionUser вызывает headers() ДО обращения к auth. Вне контекста
+// запроса Next это исключение, и тест падал бы по причине, не имеющей
+// отношения к проверяемой логике охраны ролей.
+vi.mock('next/headers', () => ({
+  headers: async () => new Headers(),
 }))
 
 beforeEach(() => {
@@ -1251,10 +1293,14 @@ main().catch(async (e) => {
 ```json
 {
   "scripts": {
-    "create-admin": "dotenv -e .env -- tsx scripts/create-admin.ts"
+    "create-admin": "dotenv -e .env -- node --conditions=react-server --import tsx scripts/create-admin.ts"
   }
 }
 ```
+
+Флаг `--conditions=react-server` обязателен. Скрипт импортирует `lib/db` → `lib/env`, а те начинаются с `import 'server-only'`. Этот пакет состоит из безусловного `throw` и обезвреживается единственным способом — условием разрешения `react-server`, которое Next.js выставляет при сборке RSC, а обычный Node — нет. Без флага скрипт падает с сообщением про Client Component, не имеющим отношения к настоящей причине.
+
+Проверить, что флаг подействовал, нужно на шаге 3: если скрипт падает с текстом «This module cannot be imported from a Client Component module» — флаг не сработал под `tsx`. Запасной вариант: создать `scripts/stub-server-only.mjs`, регистрирующий подмену модуля, и запускать `node --import ./scripts/stub-server-only.mjs --import tsx …`. О применении запасного варианта сообщить в отчёте.
 
 - [ ] **Шаг 3: Проверить создание администратора вручную**
 
@@ -1308,6 +1354,7 @@ git commit -m "feat: CLI создания первого администрат�
 - Create: `frontend/lib/auth-client.ts`
 - Create: `frontend/Components/auth/LoginForm.tsx`
 - Create: `frontend/app/(admin)/admin/layout.tsx`
+- Create: `frontend/app/(admin)/admin/page.tsx`
 
 **Interfaces:**
 - Consumes: `auth` из `lib/auth.ts`, `getSessionUser` из `server/auth/session.ts`
@@ -1455,6 +1502,45 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 ```
 
 Layout **не** выполняет проверку доступа. Она живёт в серверных функциях каждого раздела: Server Action публикуется как собственный endpoint и вызывается напрямую, минуя любой layout.
+
+- [ ] **Шаг 4a: Создать минимальную страницу панели**
+
+Без неё успешный вход ведёт на несуществующий `/admin` и проверить результат невозможно. Полноценная панель приходит следующим планом.
+
+`frontend/app/(admin)/admin/page.tsx`:
+
+```tsx
+import { redirect } from 'next/navigation'
+import { getSessionUser } from '@/server/auth/session'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export const metadata = {
+  title: 'Панель управления',
+  robots: { index: false, follow: false },
+}
+
+export default async function AdminHomePage() {
+  const user = await getSessionUser()
+
+  // Проверка здесь, а не в layout: layout не выполняется при прямом
+  // обращении к Server Action, поэтому полагаться на него нельзя.
+  if (!user || !user.isActive) redirect('/admin/login')
+
+  return (
+    <main className="mx-auto max-w-3xl p-6">
+      <h1 className="text-2xl font-bold">Панель управления</h1>
+      <p className="mt-2 text-slate-600">
+        {user.name} · {user.email} · роль: {user.role}
+      </p>
+      <p className="mt-6 rounded-lg bg-amber-50 p-4 text-sm text-amber-900">
+        Разделы управления содержимым появятся на следующем этапе.
+      </p>
+    </main>
+  )
+}
+```
 
 - [ ] **Шаг 5: Проверить вход вручную**
 

@@ -30,3 +30,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# рабочий каталог subagent-driven-development
+.superpowers/
