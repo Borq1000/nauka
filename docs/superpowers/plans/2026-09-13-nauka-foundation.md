@@ -6,7 +6,7 @@
 
 **Architecture:** Одно Next.js-приложение (App Router) с Server Components по умолчанию. Доступ к PostgreSQL — только на сервере через singleton Prisma Client. Аутентификация — better-auth с сессиями в БД (не JWT), чтобы отключение пользователя немедленно прекращало действующую сессию. Инварианты, где проверка в коде создаёт гонку, обеспечиваются ограничениями PostgreSQL.
 
-**Tech Stack:** Next.js 16.3.5, React 19.3.0, TypeScript strict, Tailwind CSS 4.3.3, Prisma 7.10.0 (CLI и client), better-auth 1.7.4, Zod 4.6.4, Vitest 5.0.0, tsx 4.23.13.
+**Tech Stack:** Next.js 16.3.5, React 19.2.8 (версию задаёт Next), TypeScript strict, Tailwind CSS 4, Prisma 7.10.0 (CLI в devDependencies, client в dependencies), `@prisma/adapter-pg` 7.10.0 + `pg` 8.23.0, better-auth 1.7.4, Zod 4.6.4, Vitest 5.0.0, tsx 4.23.13.
 
 **Spec:** `docs/superpowers/specs/2026-09-13-nauka-cms-design.md`
 
@@ -29,6 +29,11 @@
 - **Ни одного `dangerouslySetInnerHTML`** в проекте.
 - **Язык интерфейса и контента — русский.** Сообщения об ошибках для пользователя — на русском.
 - **Node.js ≥ 20.9.0** (требование `next@16.3.5`). Фактически установлен v22.16.0.
+- **Конвенции Prisma 7 обязательны** — шестая версия писалась иначе, и примеры из памяти не заработают. Проверено по документации и по установленному пакету:
+  - `datasource` содержит **только** `provider`. URL базы задаётся в `prisma.config.ts`, а не в схеме.
+  - `generator client` использует провайдер **`prisma-client`** (не `prisma-client-js`), поле `output` **обязательно**.
+  - Клиент импортируется из сгенерированного каталога, а не из `@prisma/client`.
+  - **Driver adapter обязателен:** `new PrismaClient()` без адаптера — ошибка, свойство `datasourceUrl` устарело и тоже даёт ошибку. Для PostgreSQL используется `PrismaPg` из `@prisma/adapter-pg`.
 
 ---
 
@@ -176,13 +181,15 @@ git commit -m "feat: создан проект Next.js 16 с зафиксиро�
 - Create: `frontend/tests/setup.ts`
 - Create: `frontend/tests/stubs/server-only.ts` (пустой файл)
 - Create: `frontend/prisma/schema.prisma` (минимальный, модели добавит Task 3)
+- Create: `frontend/prisma.config.ts`
 - Test: `frontend/tests/db-connection.test.ts`
 
 **Interfaces:**
 - Consumes: каталог `frontend` из Task 1
 - Produces:
-  - `lib/env.ts` → `export const env: { DATABASE_URL: string; BASE_URL: string; MEDIA_ROOT: string; BETTER_AUTH_SECRET: string }`
-  - `lib/db.ts` → `export const prisma: PrismaClient`
+  - `lib/env.ts` → `export const env: { DATABASE_URL: string; DATABASE_URL_TEST?: string; BASE_URL: string; MEDIA_ROOT: string; BETTER_AUTH_SECRET: string; BETTER_AUTH_URL: string }`
+  - `lib/db.ts` → `export const prisma: PrismaClient` (клиент импортируется из `@/generated/prisma/client`, создаётся с адаптером `PrismaPg`)
+  - сгенерированный клиент Prisma в `frontend/generated/prisma/` (в Git не попадает)
 
 - [ ] **Шаг 1: Проверить, что `.env` исключён из Git**
 
@@ -371,7 +378,10 @@ export const env = parsed.data
 
 ```ts
 import 'server-only'
-import { PrismaClient } from '@prisma/client'
+// Prisma 7: клиент импортируется из СГЕНЕРИРОВАННОГО каталога, а не из
+// пакета '@prisma/client'. Путь задан полем output в prisma/schema.prisma.
+import { PrismaClient } from '@/generated/prisma/client'
+import { PrismaPg } from '@prisma/adapter-pg'
 import { env } from './env'
 
 // В dev-режиме Next.js перезагружает модули при каждом изменении файла.
@@ -379,36 +389,80 @@ import { env } from './env'
 // и PostgreSQL быстро упёрся бы в лимит подключений.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    datasources: { db: { url: env.DATABASE_URL } },
+function createClient() {
+  // Driver adapter в Prisma 7 обязателен: new PrismaClient() без него — ошибка,
+  // а устаревшее свойство datasourceUrl тоже даёт ошибку.
+  const adapter = new PrismaPg({ connectionString: env.DATABASE_URL })
+
+  return new PrismaClient({
+    adapter,
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   })
+}
+
+export const prisma = globalForPrisma.prisma ?? createClient()
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 ```
 
 Уровень логирования `query` намеренно не включён: Prisma печатает параметры запросов, а среди них бывают пароли и персональные данные заявок.
 
-- [ ] **Шаг 8: Создать минимальную схему Prisma вручную**
+- [ ] **Шаг 7a: Установить driver adapter для PostgreSQL**
+
+```bash
+npm i --save-exact @prisma/adapter-pg@7.10.0 pg@8.23.0
+```
+
+Версия адаптера совпадает с ядром Prisma намеренно — это одна выпускаемая пара. Обе зависимости рантаймовые (`dependencies`), в отличие от CLI `prisma`, который живёт в `devDependencies`.
+
+- [ ] **Шаг 8: Создать схему Prisma и `prisma.config.ts`**
 
 **Не запускать `prisma init`.** Эта команда создаёт собственный `.env` с плейсхолдером `DATABASE_URL`, а `.env` уже создан на шаге 3 — возможна вторая строка `DATABASE_URL`, и какая победит, зависит от парсера.
 
-Перед написанием блока `generator` **сверить его синтаксис с документацией установленной Prisma 7.10.0** через Context7 (`mcp__plugin_context7_context7__resolve-library-id` → `query-docs`, тема «generator configuration», «prisma-client generator output»). В Prisma 7 сосуществуют генератор `prisma-client-js` и новый `prisma-client` с обязательным полем `output`; написанное по памяти может не собраться.
+Конвенции ниже проверены по документации Prisma 7 и по содержимому установленного пакета; они **отличаются** от привычных по шестой версии. Писать по памяти нельзя.
 
-Создать `frontend/prisma/schema.prisma` с двумя блоками, без моделей — модели добавит Task 3:
+`frontend/prisma/schema.prisma` — два блока, без моделей (модели добавит Task 3):
 
 ```prisma
 generator client {
-  // ВНИМАНИЕ: синтаксис сверить с документацией Prisma 7.10.0 перед записью
-  provider = "prisma-client-js"
+  // Prisma 7: провайдер prisma-client (НЕ prisma-client-js), output обязателен.
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
+  // Prisma 7: в блоке остаётся ТОЛЬКО provider.
+  // URL задаётся в prisma.config.ts.
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
+```
+
+`frontend/prisma.config.ts` — в корне `frontend`, рядом с `package.json`:
+
+```ts
+import { defineConfig, env } from 'prisma/config'
+
+// Prisma 7 перенесла адреса подключения из схемы сюда.
+// Подпуть 'prisma/config' реэкспортирует defineConfig и env — проверено
+// в node_modules/prisma/config.d.ts установленной версии 7.10.0.
+export default defineConfig({
+  datasource: {
+    url: env('DATABASE_URL'),
+  },
+})
+```
+
+Исключить сгенерированный клиент из Git — это артефакт сборки, а не исходный код. Добавить в `frontend/.gitignore`:
+
+```
+# сгенерированный клиент Prisma (создаётся командой prisma generate)
+/generated/
+```
+
+Чтобы сборка работала на свежем клоне, добавить в `frontend/package.json`:
+
+```json
+{ "scripts": { "postinstall": "prisma generate" } }
 ```
 
 Затем:
@@ -420,7 +474,9 @@ npm test
 
 Ожидается PASS обоих тестов. Второй тест подтверждает **реальное** подключение к PostgreSQL, а не предположение о нём.
 
-Если `prisma generate` откажется работать на схеме без моделей — добавить одну временную модель `model _Bootstrap { id String @id }`, сгенерировать клиент и удалить её в Task 3.
+Две ситуации и что делать:
+- Если `prisma generate` откажется работать на схеме без моделей — добавить временную модель `model _Bootstrap { id String @id }`, сгенерировать клиент и удалить её в Task 3.
+- Если `postinstall` упадёт из-за отсутствия переменных окружения при установке — убрать этот скрипт и вместо него задокументировать в отчёте, что перед сборкой требуется ручной `npx prisma generate`. Не заставлять установку зависеть от наличия `.env`.
 
 - [ ] **Шаг 9: Проверить, что `.env` не попал в индекс**
 
@@ -463,14 +519,16 @@ npx prisma db pull --print
 
 `frontend/prisma/schema.prisma`:
 
+Блоки `generator` и `datasource` уже созданы в Task 2 по конвенциям Prisma 7 — **оставить их как есть**, не переписывать под шестую версию:
+
 ```prisma
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -821,11 +879,13 @@ DATABASE_URL="postgresql://postgres:REDACTED@localhost:5432/events_test?schema=p
 
 ```ts
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { PrismaClient } from '@prisma/client'
 
-// tests/setup.ts уже перенаправил DATABASE_URL на events_test,
+// Используется тот же singleton, что и в приложении: tests/setup.ts уже
+// перенаправил DATABASE_URL на events_test до загрузки этого модуля,
 // поэтому клиент подключается к тестовой базе, а не к рабочей.
-const prisma = new PrismaClient()
+// Собственный new PrismaClient() здесь не создаётся: в Prisma 7 он требует
+// driver adapter, и дублировать его настройку в тестах незачем.
+import { prisma } from '@/lib/db'
 
 beforeAll(async () => {
   await prisma.page.deleteMany({ where: { slug: { startsWith: 'test-' } } })
