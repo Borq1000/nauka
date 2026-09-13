@@ -97,12 +97,19 @@ model Verification {
 }
 
 model RateLimit {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  count     Int      @default(0)
-  lastReset BigInt
+  id          String   @id @default(uuid())
+  // Имя поля обязано быть именно lastRequest: сверено с исходником
+  // @better-auth/core@1.7.4 (db/get-tables.ts) и независимо подтверждено
+  // запуском `@better-auth/cli generate`, который иначе печатает
+  // "Missing columns: rateLimit.lastRequest" — при несовпадении имени
+  // better-auth бросает SchemaMismatchError на каждый запрос, использующий
+  // rate limiting (db/schema-diff.ts, класс SchemaMismatchError).
+  key         String   @unique
+  count       Int      @default(0)
+  lastRequest BigInt
 
-  @@index([key])
+  // @@index([key]) убран: @unique уже создаёт индекс, отдельный @@index
+  // по тому же единственному полю был избыточен.
 }
 
 // ---------- Медиа ----------
