@@ -1,0 +1,11 @@
+generator client {
+  // Prisma 7: провайдер prisma-client (НЕ prisma-client-js), output обязателен.
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  // Prisma 7: в блоке остаётся ТОЛЬКО provider.
+  // URL задаётся в prisma.config.ts.
+  provider = "postgresql"
+}
