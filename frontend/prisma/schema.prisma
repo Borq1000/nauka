@@ -293,6 +293,8 @@ model SiteSettings {
   updatedAt      DateTime @updatedAt
 
   logoMedia      Media?   @relation("SiteSettingsLogo", fields: [logoMediaId], references: [id], onDelete: Restrict)
+
+  @@index([logoMediaId])
 }
 
 model Menu {
